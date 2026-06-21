@@ -77,7 +77,7 @@
     <!-- ============ MODAL (bottom sheet, alcance con el pulgar) ============ -->
     <div id="modal-backdrop" class="backdrop fixed inset-0 bg-black/70 opacity-0 pointer-events-none z-40"></div>
     <div id="modal-carga" class="sheet sheet-hidden fixed inset-x-0 bottom-0 z-50">
-        <form id="form-carga" class="bg-gray-800 p-5 pb-8 rounded-t-3xl w-full max-w-md mx-auto space-y-3 border-t border-gray-700">
+        <form id="form-carga" class="bg-gray-800 p-5 pb-8 rounded-t-3xl w-full max-w-md mx-auto space-y-3 border-t border-gray-700 max-h-[85vh] overflow-y-auto">
             <div class="h-1.5 w-10 bg-gray-600 rounded-full mx-auto mb-1"></div>
 
             <div class="flex items-center justify-between">
@@ -85,14 +85,6 @@
                 <span id="modal-tipo-chip" class="text-xs font-bold px-2.5 py-1 rounded-full"></span>
             </div>
             <input type="hidden" id="form-tipo">
-
-            <div class="relative">
-                <input type="text" id="input-producto" placeholder="Producto (opcional)"
-                    autocomplete="off" maxlength="120"
-                    class="w-full bg-gray-900 p-3.5 rounded-xl border border-gray-700 focus:border-emerald-500 outline-none text-base">
-                <p id="producto-confirmado" class="text-xs text-emerald-400 mt-1 hidden">✓ Producto del catálogo confirmado</p>
-                <div id="producto-sugerencias" class="hidden mt-1.5 space-y-1.5"></div>
-            </div>
 
             <div>
                 <input type="text" id="input-cliente" placeholder="Nombre del cliente" required
@@ -102,10 +94,31 @@
             </div>
 
             <div>
-                <input type="number" id="input-monto" placeholder="Monto" required
-                    inputmode="decimal" step="0.01" min="0" max="999999999"
-                    class="w-full bg-gray-900 p-3.5 rounded-xl border border-gray-700 focus:border-emerald-500 outline-none text-base tnum">
-                <p id="error-monto" class="text-xs text-red-400 mt-1 hidden">Ingresá un monto válido mayor a 0.</p>
+                <div id="lineas-productos" class="space-y-2"></div>
+                <button type="button" id="btn-agregar-linea"
+                    class="w-full mt-2 text-sm text-emerald-400 border border-dashed border-emerald-500/40 rounded-xl py-2 active:bg-emerald-500/10">
+                    + Agregar otro producto
+                </button>
+                <p id="error-lineas" class="text-xs text-red-400 mt-1 hidden">Agregá al menos un producto con cantidad y precio.</p>
+            </div>
+
+            <div class="flex justify-between items-center pt-1">
+                <span class="text-sm text-gray-400">Total del pedido</span>
+                <span id="total-pedido" class="text-lg font-bold text-emerald-400 tnum">$0</span>
+            </div>
+
+            <div>
+                <input type="file" id="input-foto" accept="image/*" capture="environment" class="hidden">
+                <button type="button" id="btn-tomar-foto"
+                    class="w-full flex items-center justify-center gap-2 text-sm text-gray-300 border border-gray-700 rounded-xl py-2.5 active:bg-gray-700">
+                    <span>📷</span><span id="btn-foto-label">Adjuntar foto del pedido (opcional)</span>
+                </button>
+                <div id="foto-preview-cont" class="hidden mt-2 relative inline-block">
+                    <img id="foto-preview" class="h-20 w-20 object-cover rounded-lg border border-gray-700" alt="Foto del pedido">
+                    <button type="button" id="btn-quitar-foto"
+                        class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full h-5 w-5 text-xs leading-none">✕</button>
+                </div>
+                <p id="foto-status" class="text-xs text-gray-500 mt-1 hidden"></p>
             </div>
 
             <textarea id="input-notas" placeholder="Notas adicionales (opcional)" rows="2" maxlength="500"
@@ -191,7 +204,15 @@
                 const scoreAlias = (producto.aliases || [])
                     .map(a => similarity(normInput, a))
                     .reduce((max, s) => Math.max(max, s), 0);
-                return { producto, score: Math.max(scoreNombre, scoreTokens, scoreAlias) };
+                // Prefijo: clave para que escribir pocas letras ("gl") ya muestre
+                // opciones, como un buscador con autocompletado real.
+                const scorePrefix = nombreTokens.reduce((max, t) => {
+                    if (t.startsWith(normInput)) {
+                        return Math.max(max, 0.5 + 0.5 * (normInput.length / t.length));
+                    }
+                    return max;
+                }, 0);
+                return { producto, score: Math.max(scoreNombre, scoreTokens, scoreAlias, scorePrefix) };
             });
             scored.sort((a, b) => b.score - a.score);
             return scored.slice(0, maxResults).map(r => ({
@@ -275,9 +296,16 @@
         inFlight: false,
 
         async pushOne(record) {
-            const res = await fetch(CONFIG.SCRIPT_URL, {
-                method: "POST",
-                body: JSON.stringify({
+            const body = record.kind === "foto"
+                ? {
+                    token: CONFIG.SHARED_SECRET,
+                    accion: "foto",
+                    idPedido: record.idPedido || "",
+                    cliente: record.cliente,
+                    fotoBase64: record.fotoBase64,
+                    recordId: record.id
+                }
+                : {
                     token: CONFIG.SHARED_SECRET,
                     tipo: record.tipo,
                     cliente: record.cliente,
@@ -285,9 +313,16 @@
                     notas: record.notas,
                     productoInput: record.productoInput || "",
                     productoNormalizado: record.productoNormalizado || "",
+                    cantidad: record.cantidad || 0,
+                    precioUnitario: record.precioUnitario || 0,
+                    idPedido: record.idPedido || "",
                     clientTimestamp: record.createdAt,
                     recordId: record.id
-                })
+                };
+
+            const res = await fetch(CONFIG.SCRIPT_URL, {
+                method: "POST",
+                body: JSON.stringify(body)
             });
             if (!res.ok) throw new Error("HTTP " + res.status);
             const data = await res.json();
@@ -378,7 +413,9 @@
         renderLista() {
             const ul = document.getElementById("lista-actividad");
             const empty = document.getElementById("empty-state");
-            const records = Store.getAll().slice(0, 8);
+            const todos = Store.getAll();
+            const pedidosConFoto = new Set(todos.filter(r => r.kind === "foto").map(r => r.idPedido));
+            const records = todos.filter(r => r.kind !== "foto").slice(0, 8);
 
             if (records.length === 0) {
                 ul.innerHTML = "";
@@ -392,13 +429,14 @@
                 const tipoColor = r.tipo === "Venta" ? "text-emerald-400" : "text-sky-400";
                 const statusLabel = r.synced ? "Sincronizado" : (r.lastError ? "Error de envío" : "Pendiente");
                 const productoTexto = r.productoNormalizado || r.productoInput || "";
+                const tieneFoto = pedidosConFoto.has(r.idPedido);
                 // textContent-safe: se arma con nodos, no con HTML del usuario, para evitar inyección de markup.
                 return `
                 <li class="flex items-center gap-3 bg-gray-800/70 border border-gray-700 rounded-xl p-3">
                     <span class="h-2 w-2 rounded-full ${dotColor} shrink-0" title="${statusLabel}"></span>
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center justify-between gap-2">
-                            <span class="font-semibold text-sm truncate">${UI.escape(r.cliente)}</span>
+                            <span class="font-semibold text-sm truncate">${UI.escape(r.cliente)}${tieneFoto ? ' 📷' : ''}</span>
                             <span class="text-sm font-bold tnum ${tipoColor}">${Utils.money(r.monto)}</span>
                         </div>
                         <div class="text-[11px] text-gray-500 flex items-center gap-1.5">
@@ -421,29 +459,6 @@
             return div.innerHTML;
         },
 
-        renderSugerenciasProducto(matches) {
-            const cont = document.getElementById("producto-sugerencias");
-            if (!matches || matches.length === 0) {
-                cont.classList.add("hidden");
-                cont.innerHTML = "";
-                return;
-            }
-            const colorConfianza = { alta: "border-emerald-500/50 text-emerald-300", media: "border-amber-500/50 text-amber-300", baja: "border-gray-600 text-gray-400" };
-            cont.innerHTML = matches.map((m, i) => `
-                <button type="button" data-idx="${i}"
-                    class="sugerencia-producto w-full text-left bg-gray-900 border ${colorConfianza[m.confianza]} rounded-lg px-3 py-2 text-xs">
-                    <div class="font-semibold text-gray-100">${UI.escape(m.producto.nombre_oficial)}</div>
-                    <div class="text-gray-500">${UI.escape(m.producto.ingrediente_activo)} · confianza ${m.confianza}</div>
-                </button>`).join("");
-            cont.classList.remove("hidden");
-            cont.querySelectorAll(".sugerencia-producto").forEach(btn => {
-                btn.addEventListener("click", () => {
-                    const m = matches[Number(btn.dataset.idx)];
-                    App.seleccionarProducto(m);
-                });
-            });
-        },
-
         refresh() {
             document.getElementById("kpi-ventas").textContent = Utils.money(Store.kpiVentas());
             this.renderLista();
@@ -452,17 +467,225 @@
     };
 
     /* =========================================================================
+       LINEAS — múltiples productos por pedido, cada uno con cantidad y precio.
+       El "menú desplegable" es una lista de sugerencias que aparece debajo del
+       campo a medida que se escribe (autocompletado real, no un <select> fijo,
+       porque necesita filtrar en vivo contra 140 productos).
+       ========================================================================= */
+    const Lineas = {
+        items: [],
+
+        nueva() {
+            return { uid: Utils.uuid(), texto: "", productoId: null, productoNombre: null, cantidad: "", precioUnitario: "" };
+        },
+
+        reset() {
+            this.items = [this.nueva()];
+            this.render();
+        },
+
+        agregar() {
+            this.items.push(this.nueva());
+            this.render();
+            requestAnimationFrame(() => {
+                const cards = document.querySelectorAll(".linea-producto");
+                const last = cards[cards.length - 1];
+                if (last) last.querySelector(".input-linea-producto").focus();
+            });
+        },
+
+        quitar(uid) {
+            if (this.items.length <= 1) return;
+            this.items = this.items.filter(l => l.uid !== uid);
+            this.render();
+        },
+
+        subtotal(linea) {
+            const c = parseFloat(linea.cantidad) || 0;
+            const p = parseFloat(linea.precioUnitario) || 0;
+            return c * p;
+        },
+
+        total() {
+            return this.items.reduce((sum, l) => sum + this.subtotal(l), 0);
+        },
+
+        actualizarTotales(card, linea) {
+            const el = card.querySelector(".linea-subtotal-valor");
+            if (el) el.textContent = Utils.money(this.subtotal(linea));
+            document.getElementById("total-pedido").textContent = Utils.money(this.total());
+        },
+
+        mostrarSugerencias(card, linea) {
+            const caja = card.querySelector(".sugerencias-linea");
+            const texto = linea.texto.trim();
+            if (texto.length < 2) { caja.classList.add("hidden"); caja.innerHTML = ""; return; }
+
+            const matches = CatalogMatch.matchProduct(texto, CATALOGO, { maxResults: 5 })
+                .filter(m => m.score >= 0.4);
+            if (matches.length === 0) { caja.classList.add("hidden"); caja.innerHTML = ""; return; }
+
+            const colorConfianza = { alta: "text-emerald-400", media: "text-amber-400", baja: "text-gray-500" };
+            caja.innerHTML = matches.map(m => `
+                <button type="button" class="sugerencia-linea-item w-full text-left px-3 py-2.5 text-xs border-b border-gray-700 last:border-0 active:bg-gray-700"
+                    data-producto-id="${m.producto.id}"
+                    data-nombre="${UI.escape(m.producto.nombre_oficial)}"
+                    data-precio="${m.producto.precio_referencia_usd ?? ""}">
+                    <div class="font-semibold text-gray-100">${UI.escape(m.producto.nombre_oficial)}</div>
+                    <div class="text-gray-500">${UI.escape(m.producto.ingrediente_activo)} <span class="${colorConfianza[m.confianza]}">· ${m.confianza}</span></div>
+                </button>`).join("");
+            caja.classList.remove("hidden");
+        },
+
+        seleccionar(card, linea, btn) {
+            linea.texto = btn.dataset.nombre;
+            linea.productoId = btn.dataset.productoId;
+            linea.productoNombre = btn.dataset.nombre;
+            if (!linea.precioUnitario && btn.dataset.precio) {
+                linea.precioUnitario = btn.dataset.precio;
+            }
+            this.render();
+        },
+
+        render() {
+            const cont = document.getElementById("lineas-productos");
+            cont.innerHTML = this.items.map(l => `
+                <div class="linea-producto bg-gray-900 border border-gray-700 rounded-xl p-3 space-y-2" data-uid="${l.uid}">
+                    <div class="relative">
+                        <input type="text" class="input-linea-producto w-full bg-gray-800 p-2.5 rounded-lg border border-gray-700 text-sm focus:border-emerald-500 outline-none"
+                            placeholder="Producto (escribí 2+ letras)" autocomplete="off" value="${UI.escape(l.texto)}">
+                        <div class="sugerencias-linea hidden absolute left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-10 max-h-56 overflow-y-auto"></div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 items-center">
+                        <input type="number" class="input-linea-cantidad bg-gray-800 p-2 rounded-lg border border-gray-700 text-sm tnum" placeholder="Cant." inputmode="decimal" min="0" step="0.01" value="${l.cantidad}">
+                        <input type="number" class="input-linea-precio bg-gray-800 p-2 rounded-lg border border-gray-700 text-sm tnum" placeholder="Precio U." inputmode="decimal" min="0" step="0.01" value="${l.precioUnitario}">
+                        <div class="flex items-center justify-between gap-1">
+                            <span class="linea-subtotal-valor text-xs font-bold tnum text-gray-300">${Utils.money(this.subtotal(l))}</span>
+                            ${this.items.length > 1 ? `<button type="button" class="btn-quitar-linea text-red-400 text-sm leading-none">✕</button>` : ""}
+                        </div>
+                    </div>
+                </div>`).join("");
+            document.getElementById("total-pedido").textContent = Utils.money(this.total());
+        },
+
+        bind() {
+            const cont = document.getElementById("lineas-productos");
+
+            cont.addEventListener("input", (e) => {
+                const card = e.target.closest(".linea-producto");
+                if (!card) return;
+                const linea = this.items.find(l => l.uid === card.dataset.uid);
+                if (!linea) return;
+
+                if (e.target.classList.contains("input-linea-producto")) {
+                    linea.texto = e.target.value;
+                    linea.productoId = null;
+                    linea.productoNombre = null;
+                    clearTimeout(linea._t);
+                    linea._t = setTimeout(() => this.mostrarSugerencias(card, linea), 150);
+                } else if (e.target.classList.contains("input-linea-cantidad")) {
+                    linea.cantidad = e.target.value;
+                    this.actualizarTotales(card, linea);
+                } else if (e.target.classList.contains("input-linea-precio")) {
+                    linea.precioUnitario = e.target.value;
+                    this.actualizarTotales(card, linea);
+                }
+            });
+
+            cont.addEventListener("click", (e) => {
+                const quitarBtn = e.target.closest(".btn-quitar-linea");
+                if (quitarBtn) {
+                    const card = quitarBtn.closest(".linea-producto");
+                    this.quitar(card.dataset.uid);
+                    return;
+                }
+                const sugBtn = e.target.closest(".sugerencia-linea-item");
+                if (sugBtn) {
+                    const card = sugBtn.closest(".linea-producto");
+                    const linea = this.items.find(l => l.uid === card.dataset.uid);
+                    if (linea) this.seleccionar(card, linea, sugBtn);
+                }
+            });
+
+            document.getElementById("btn-agregar-linea").addEventListener("click", () => this.agregar());
+        }
+    };
+
+    /* =========================================================================
+       FOTO — respaldo del pedido, SIN intentar leer su contenido (ver
+       conversación: Tesseract.js probado contra manuscrito real, 0% útil).
+       Se comprime en el celular antes de guardar/enviar para no colgarse
+       con mala señal — apunta a ~100-250KB por foto.
+       ========================================================================= */
+    const Foto = {
+        dataUrl: null,
+
+        reset() {
+            this.dataUrl = null;
+            document.getElementById("input-foto").value = "";
+            document.getElementById("foto-preview-cont").classList.add("hidden");
+            document.getElementById("btn-foto-label").textContent = "Adjuntar foto del pedido (opcional)";
+            const status = document.getElementById("foto-status");
+            status.classList.add("hidden");
+            status.textContent = "";
+        },
+
+        async comprimir(file) {
+            const status = document.getElementById("foto-status");
+            status.textContent = "Comprimiendo imagen…";
+            status.classList.remove("hidden");
+
+            try {
+                const dataUrlOriginal = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                const img = await new Promise((resolve, reject) => {
+                    const i = new Image();
+                    i.onload = () => resolve(i);
+                    i.onerror = reject;
+                    i.src = dataUrlOriginal;
+                });
+
+                const MAX_DIM = 1000;
+                let width = img.width, height = img.height;
+                if (width > height && width > MAX_DIM) { height = Math.round(height * MAX_DIM / width); width = MAX_DIM; }
+                else if (height >= width && height > MAX_DIM) { width = Math.round(width * MAX_DIM / height); height = MAX_DIM; }
+
+                const canvas = document.createElement("canvas");
+                canvas.width = width; canvas.height = height;
+                canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+                const comprimido = canvas.toDataURL("image/jpeg", 0.5);
+
+                this.dataUrl = comprimido;
+                const kb = Math.round((comprimido.length * 3 / 4) / 1024);
+                document.getElementById("foto-preview").src = comprimido;
+                document.getElementById("foto-preview-cont").classList.remove("hidden");
+                document.getElementById("btn-foto-label").textContent = "Cambiar foto";
+                status.textContent = `Lista para guardar (~${kb} KB)`;
+            } catch (err) {
+                status.textContent = "No se pudo procesar la imagen, probá de nuevo.";
+                this.dataUrl = null;
+            }
+        },
+
+        bind() {
+            document.getElementById("btn-tomar-foto").addEventListener("click", () => document.getElementById("input-foto").click());
+            document.getElementById("input-foto").addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (file) this.comprimir(file);
+            });
+            document.getElementById("btn-quitar-foto").addEventListener("click", (e) => { e.stopPropagation(); Foto.reset(); });
+        }
+    };
+
+    /* =========================================================================
        APP — orquestación y handlers de eventos
        ========================================================================= */
     const App = {
-        productoSeleccionado: null, // { id, nombre_oficial, score } o null si quedó texto libre
-
-        seleccionarProducto(match) {
-            document.getElementById("input-producto").value = match.producto.nombre_oficial;
-            document.getElementById("producto-confirmado").classList.remove("hidden");
-            UI.renderSugerenciasProducto([]);
-            App.productoSeleccionado = { id: match.producto.id, nombre_oficial: match.producto.nombre_oficial, score: match.score };
-        },
         abrirModal(tipo) {
             document.getElementById("form-tipo").value = tipo;
             const chip = document.getElementById("modal-tipo-chip");
@@ -472,6 +695,8 @@
 
             document.getElementById("modal-backdrop").classList.remove("opacity-0", "pointer-events-none");
             document.getElementById("modal-carga").classList.remove("sheet-hidden");
+            Lineas.reset();
+            Foto.reset();
             setTimeout(() => document.getElementById("input-cliente").focus(), 150);
         },
 
@@ -480,10 +705,9 @@
             document.getElementById("modal-carga").classList.add("sheet-hidden");
             document.getElementById("form-carga").reset();
             document.getElementById("error-cliente").classList.add("hidden");
-            document.getElementById("error-monto").classList.add("hidden");
-            document.getElementById("producto-confirmado").classList.add("hidden");
-            UI.renderSugerenciasProducto([]);
-            App.productoSeleccionado = null;
+            document.getElementById("error-lineas").classList.add("hidden");
+            Lineas.items = [];
+            Foto.reset();
         },
 
         manualSync() {
@@ -496,9 +720,7 @@
 
             const tipo = document.getElementById("form-tipo").value;
             const cliente = document.getElementById("input-cliente").value.trim();
-            const montoRaw = document.getElementById("input-monto").value;
             const notas = document.getElementById("input-notas").value.trim();
-            const monto = parseFloat(montoRaw);
 
             let valid = true;
             if (cliente.length < 2) {
@@ -507,33 +729,65 @@
             } else {
                 document.getElementById("error-cliente").classList.add("hidden");
             }
-            if (!Number.isFinite(monto) || monto <= 0) {
-                document.getElementById("error-monto").classList.remove("hidden");
+
+            // Solo cuentan las líneas donde Fernando escribió algo de producto.
+            const lineasValidas = Lineas.items.filter(l => l.texto.trim().length > 0);
+            const lineasConCantidad = lineasValidas.filter(l => parseFloat(l.cantidad) > 0);
+
+            if (lineasValidas.length === 0 || lineasConCantidad.length !== lineasValidas.length) {
+                document.getElementById("error-lineas").classList.remove("hidden");
                 valid = false;
             } else {
-                document.getElementById("error-monto").classList.add("hidden");
+                document.getElementById("error-lineas").classList.add("hidden");
             }
+
             if (!valid) return;
 
             const btn = document.getElementById("btn-guardar");
             btn.disabled = true;
 
-            const record = {
-                id: Utils.uuid(),
-                tipo, cliente, monto, notas,
-                productoInput: document.getElementById("input-producto").value.trim(),
-                productoId: App.productoSeleccionado ? App.productoSeleccionado.id : null,
-                productoNormalizado: App.productoSeleccionado ? App.productoSeleccionado.nombre_oficial : null,
-                productoScore: App.productoSeleccionado ? App.productoSeleccionado.score : null,
-                createdAt: new Date().toISOString(),
-                synced: false,
-                attempts: 0,
-                lastError: null
-            };
-            Store.add(record);
+            const idPedido = Utils.uuid();
+            const createdAt = new Date().toISOString();
+
+            lineasValidas.forEach(l => {
+                const cantidad = parseFloat(l.cantidad) || 0;
+                const precioUnitario = parseFloat(l.precioUnitario) || 0;
+                Store.add({
+                    id: Utils.uuid(),
+                    kind: "venta",
+                    idPedido,
+                    tipo, cliente, notas,
+                    monto: cantidad * precioUnitario, // subtotal de ESTA línea
+                    productoInput: l.texto,
+                    productoId: l.productoId,
+                    productoNormalizado: l.productoNombre,
+                    cantidad,
+                    precioUnitario,
+                    createdAt,
+                    synced: false,
+                    attempts: 0,
+                    lastError: null
+                });
+            });
+
+            if (Foto.dataUrl) {
+                Store.add({
+                    id: Utils.uuid(),
+                    kind: "foto",
+                    idPedido,
+                    cliente,
+                    fotoBase64: Foto.dataUrl,
+                    createdAt,
+                    synced: false,
+                    attempts: 0,
+                    lastError: null
+                });
+            }
+
             UI.refresh();
             App.cerrarModal();
-            UI.toast("Guardado localmente. Sincronizando…");
+            const sufijoFoto = Foto.dataUrl ? " + foto" : "";
+            UI.toast(`Guardado localmente (${lineasValidas.length} producto(s)${sufijoFoto}). Sincronizando…`);
 
             btn.disabled = false;
             Sync.flushQueue();
@@ -542,19 +796,8 @@
         init() {
             document.getElementById("form-carga").addEventListener("submit", App.handleSubmit);
             document.getElementById("modal-backdrop").addEventListener("click", App.cerrarModal);
-
-            let debounceTimer = null;
-            document.getElementById("input-producto").addEventListener("input", (e) => {
-                document.getElementById("producto-confirmado").classList.add("hidden");
-                App.productoSeleccionado = null;
-                clearTimeout(debounceTimer);
-                const val = e.target.value;
-                debounceTimer = setTimeout(() => {
-                    if (val.trim().length < 2) { UI.renderSugerenciasProducto([]); return; }
-                    const matches = CatalogMatch.matchProduct(val, CATALOGO, { maxResults: 3 });
-                    UI.renderSugerenciasProducto(matches.filter(m => m.score >= 0.4));
-                }, 150);
-            });
+            Lineas.bind();
+            Foto.bind();
 
             window.addEventListener("online", () => { UI.toast("Conexión recuperada. Sincronizando…"); Sync.flushQueue(); });
             window.addEventListener("offline", () => { UI.updateStatusBadge(); UI.toast("Sin conexión. Los datos se guardan en el equipo."); });
