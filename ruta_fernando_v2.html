@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Panel de Ruta · Fernando</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Cifras monetarias alineadas (tabular) — legibilidad en campo */
+        .tnum { font-variant-numeric: tabular-nums; }
+        .sheet { transition: transform .28s ease; }
+        .sheet-hidden { transform: translateY(100%); }
+        .backdrop { transition: opacity .2s ease; }
+        @keyframes pulse-soft { 0%,100%{opacity:1} 50%{opacity:.45} }
+        .pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }
+        .toast { transition: opacity .25s ease, transform .25s ease; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen pb-10">
+
+    <!-- ============ HEADER: marca + estado de conectividad/sync ============ -->
+    <header class="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-800">
+        <div class="max-w-md mx-auto px-4 pt-4 pb-3">
+            <div class="flex justify-between items-center mb-3">
+                <div>
+                    <h1 class="font-bold text-lg leading-none">Panel de Ruta</h1>
+                    <p class="text-[11px] text-gray-500 mt-1">Fernando · Ventas de campo</p>
+                </div>
+                <div class="text-right">
+                    <div class="text-[11px] text-gray-500">Ventas del período</div>
+                    <div id="kpi-ventas" class="text-emerald-400 font-bold text-xl tnum">$0</div>
+                </div>
+            </div>
+
+            <!-- Pastilla de estado: única en su tipo, refleja el corazón técnico de la app -->
+            <button id="status-badge" onclick="App.manualSync()"
+                class="w-full flex items-center justify-between gap-2 text-xs font-semibold px-3 py-2 rounded-xl border transition-colors">
+                <span class="flex items-center gap-2">
+                    <span id="status-dot" class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                    <span id="status-text">Verificando conexión…</span>
+                </span>
+                <span id="status-action" class="text-[11px] underline decoration-dotted opacity-80"></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-md mx-auto px-4">
+
+        <!-- ============ ACCIONES PRINCIPALES ============ -->
+        <div class="grid grid-cols-2 gap-3 my-5">
+            <button onclick="App.abrirModal('Venta')"
+                class="bg-emerald-600 active:bg-emerald-700 p-4 rounded-2xl font-bold text-base transition flex flex-col items-center gap-1">
+                <i data-lucide="circle-dollar-sign" class="h-5 w-5"></i>
+                Cargar Venta
+            </button>
+            <button onclick="App.abrirModal('Presupuesto')"
+                class="bg-sky-600 active:bg-sky-700 p-4 rounded-2xl font-bold text-base transition flex flex-col items-center gap-1">
+                <i data-lucide="file-text" class="h-5 w-5"></i>
+                Nuevo Prospecto
+            </button>
+        </div>
+
+        <!-- ============ ACTIVIDAD RECIENTE ============ -->
+        <section>
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-sm font-semibold text-gray-400">Actividad reciente</h2>
+                <span id="pending-count" class="text-[11px] text-amber-400 hidden"></span>
+            </div>
+            <ul id="lista-actividad" class="space-y-2"></ul>
+            <p id="empty-state" class="text-sm text-gray-500 text-center py-10 border border-dashed border-gray-700 rounded-xl">
+                Todavía no registraste nada hoy.<br>Tocá un botón de arriba para empezar.
+            </p>
+        </section>
+    </main>
+
+    <!-- ============ MODAL (bottom sheet, alcance con el pulgar) ============ -->
+    <div id="modal-backdrop" class="backdrop fixed inset-0 bg-black/70 opacity-0 pointer-events-none z-40"></div>
+    <div id="modal-carga" class="sheet sheet-hidden fixed inset-x-0 bottom-0 z-50">
+        <form id="form-carga" class="bg-gray-800 p-5 pb-8 rounded-t-3xl w-full max-w-md mx-auto space-y-3 border-t border-gray-700">
+            <div class="h-1.5 w-10 bg-gray-600 rounded-full mx-auto mb-1"></div>
+
+            <div class="flex items-center justify-between">
+                <h2 class="font-bold text-lg">Registrar</h2>
+                <span id="modal-tipo-chip" class="text-xs font-bold px-2.5 py-1 rounded-full"></span>
+            </div>
+            <input type="hidden" id="form-tipo">
+
+            <div>
+                <input type="text" id="input-cliente" placeholder="Nombre del cliente" required
+                    autocomplete="off" autocapitalize="words" maxlength="120"
+                    class="w-full bg-gray-900 p-3.5 rounded-xl border border-gray-700 focus:border-emerald-500 outline-none text-base">
+                <p id="error-cliente" class="text-xs text-red-400 mt-1 hidden">Ingresá al menos 2 caracteres.</p>
+            </div>
+
+            <div>
+                <input type="number" id="input-monto" placeholder="Monto" required
+                    inputmode="decimal" step="0.01" min="0" max="999999999"
+                    class="w-full bg-gray-900 p-3.5 rounded-xl border border-gray-700 focus:border-emerald-500 outline-none text-base tnum">
+                <p id="error-monto" class="text-xs text-red-400 mt-1 hidden">Ingresá un monto válido mayor a 0.</p>
+            </div>
+
+            <textarea id="input-notas" placeholder="Notas adicionales (opcional)" rows="2" maxlength="500"
+                class="w-full bg-gray-900 p-3.5 rounded-xl border border-gray-700 focus:border-emerald-500 outline-none text-base"></textarea>
+
+            <button type="submit" id="btn-guardar"
+                class="w-full bg-emerald-500 active:bg-emerald-600 disabled:opacity-50 disabled:active:bg-emerald-500 p-3.5 rounded-xl font-bold text-base transition">
+                Guardar
+            </button>
+            <button type="button" onclick="App.cerrarModal()" class="w-full text-gray-400 py-1 text-sm">Cancelar</button>
+        </form>
+    </div>
+
+    <!-- ============ TOAST ============ -->
+    <div id="toast" class="toast fixed bottom-4 left-1/2 -translate-x-1/2 opacity-0 pointer-events-none z-[60] max-w-[90vw]">
+        <div class="bg-gray-800 border border-gray-700 text-sm px-4 py-2.5 rounded-xl shadow-lg"></div>
+    </div>
+
+    <script>
+    "use strict";
+
+    /* =========================================================================
+       CONFIG
+       Reemplazar SCRIPT_URL por la URL /exec del Apps Script desplegado
+       (ver AppsScript_Backend.gs + AUDITORIA_TECNICA.md adjuntos).
+       SHARED_SECRET debe coincidir exactamente con el del backend.
+       ========================================================================= */
+    const CONFIG = {
+        SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyReUNQFPsZI-_djJuIT2kE-u0d_OtVwMdeiJpjhAKCljkwdOB_wMWvSwXmhOJa3ryg/exec",
+        SHARED_SECRET: "fernando-ruta-2026-x7k",
+        STORAGE_KEY: "rutaFernando.records.v1",
+        RETRY_INTERVAL_MS: 20000
+    };
+
+    /* =========================================================================
+       UTILS
+       ========================================================================= */
+    const Utils = {
+        uuid() {
+            if (crypto && crypto.randomUUID) return crypto.randomUUID();
+            return "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+        },
+        money(n) {
+            const v = Number(n) || 0;
+            return "$" + v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        },
+        timeAgo(iso) {
+            const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+            if (diffMin < 1) return "ahora";
+            if (diffMin < 60) return diffMin + " min";
+            const h = Math.round(diffMin / 60);
+            if (h < 24) return h + " h";
+            return new Date(iso).toLocaleDateString();
+        }
+    };
+
+    /* =========================================================================
+       STORE — capa de persistencia local (localStorage como cola + caché)
+       Cada registro: { id, tipo, cliente, monto, notas, createdAt, synced, attempts, lastError }
+       ========================================================================= */
+    const Store = {
+        getAll() {
+            try {
+                return JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || [];
+            } catch {
+                return [];
+            }
+        },
+        saveAll(records) {
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(records));
+        },
+        add(record) {
+            const all = this.getAll();
+            all.unshift(record);
+            this.saveAll(all);
+        },
+        markSynced(id) {
+            const all = this.getAll().map(r => r.id === id ? { ...r, synced: true, lastError: null } : r);
+            this.saveAll(all);
+        },
+        markError(id, message) {
+            const all = this.getAll().map(r =>
+                r.id === id ? { ...r, attempts: (r.attempts || 0) + 1, lastError: message } : r
+            );
+            this.saveAll(all);
+        },
+        getPending() {
+            return this.getAll().filter(r => !r.synced);
+        },
+        kpiVentas() {
+            return this.getAll()
+                .filter(r => r.tipo === "Venta")
+                .reduce((sum, r) => sum + (Number(r.monto) || 0), 0);
+        }
+    };
+
+    /* =========================================================================
+       SYNC — envío al backend (Apps Script) con reintentos y cola offline
+       Nota CORS: el body se envía como string SIN header Content-Type explícito.
+       Esto lo convierte en una "simple request" (text/plain por defecto) y evita
+       el preflight OPTIONS, que Apps Script Web Apps no resuelve de forma fiable.
+       ========================================================================= */
+    const Sync = {
+        inFlight: false,
+
+        async pushOne(record) {
+            const res = await fetch(CONFIG.SCRIPT_URL, {
+                method: "POST",
+                body: JSON.stringify({
+                    token: CONFIG.SHARED_SECRET,
+                    tipo: record.tipo,
+                    cliente: record.cliente,
+                    monto: record.monto,
+                    notas: record.notas,
+                    clientTimestamp: record.createdAt,
+                    recordId: record.id
+                })
+            });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || "Error del servidor");
+            return data;
+        },
+
+        async flushQueue() {
+            if (this.inFlight) return;
+            if (!navigator.onLine) { UI.updateStatusBadge(); return; }
+
+            const pending = Store.getPending();
+            if (pending.length === 0) { UI.updateStatusBadge(); return; }
+
+            this.inFlight = true;
+            UI.updateStatusBadge();
+
+            for (const record of pending) {
+                try {
+                    await this.pushOne(record);
+                    Store.markSynced(record.id);
+                } catch (err) {
+                    Store.markError(record.id, err.message);
+                }
+                UI.refresh();
+            }
+
+            this.inFlight = false;
+            UI.updateStatusBadge();
+        }
+    };
+
+    /* =========================================================================
+       UI — render y eventos de interfaz
+       ========================================================================= */
+    const UI = {
+        toastTimer: null,
+
+        toast(msg) {
+            const el = document.getElementById("toast");
+            el.querySelector("div").textContent = msg;
+            el.classList.remove("opacity-0", "pointer-events-none");
+            clearTimeout(this.toastTimer);
+            this.toastTimer = setTimeout(() => el.classList.add("opacity-0", "pointer-events-none"), 2600);
+        },
+
+        updateStatusBadge() {
+            const badge = document.getElementById("status-badge");
+            const dot = document.getElementById("status-dot");
+            const text = document.getElementById("status-text");
+            const action = document.getElementById("status-action");
+            const pending = Store.getPending().length;
+
+            badge.className = "w-full flex items-center justify-between gap-2 text-xs font-semibold px-3 py-2 rounded-xl border transition-colors";
+            dot.className = "h-2 w-2 rounded-full";
+
+            if (!navigator.onLine) {
+                badge.classList.add("bg-amber-500/10", "border-amber-500/40", "text-amber-300");
+                dot.classList.add("bg-amber-400", "pulse-soft");
+                text.textContent = pending > 0 ? `Sin conexión · ${pending} pendiente(s) guardados` : "Sin conexión · guardando localmente";
+                action.textContent = "";
+            } else if (Sync.inFlight) {
+                badge.classList.add("bg-sky-500/10", "border-sky-500/40", "text-sky-300");
+                dot.classList.add("bg-sky-400", "pulse-soft");
+                text.textContent = "Sincronizando…";
+                action.textContent = "";
+            } else if (pending > 0) {
+                badge.classList.add("bg-amber-500/10", "border-amber-500/40", "text-amber-300");
+                dot.classList.add("bg-amber-400");
+                text.textContent = `${pending} pendiente(s) de sincronizar`;
+                action.textContent = "Reintentar";
+            } else {
+                badge.classList.add("bg-emerald-500/10", "border-emerald-500/40", "text-emerald-300");
+                dot.classList.add("bg-emerald-400");
+                text.textContent = "En línea · Todo sincronizado";
+                action.textContent = "";
+            }
+
+            const pendingLabel = document.getElementById("pending-count");
+            if (pending > 0) {
+                pendingLabel.textContent = `${pending} sin enviar`;
+                pendingLabel.classList.remove("hidden");
+            } else {
+                pendingLabel.classList.add("hidden");
+            }
+        },
+
+        renderLista() {
+            const ul = document.getElementById("lista-actividad");
+            const empty = document.getElementById("empty-state");
+            const records = Store.getAll().slice(0, 8);
+
+            if (records.length === 0) {
+                ul.innerHTML = "";
+                empty.classList.remove("hidden");
+                return;
+            }
+            empty.classList.add("hidden");
+
+            ul.innerHTML = records.map(r => {
+                const dotColor = r.synced ? "bg-emerald-400" : (r.lastError ? "bg-red-400" : "bg-amber-400");
+                const tipoColor = r.tipo === "Venta" ? "text-emerald-400" : "text-sky-400";
+                const statusLabel = r.synced ? "Sincronizado" : (r.lastError ? "Error de envío" : "Pendiente");
+                // textContent-safe: se arma con nodos, no con HTML del usuario, para evitar inyección de markup.
+                return `
+                <li class="flex items-center gap-3 bg-gray-800/70 border border-gray-700 rounded-xl p-3">
+                    <span class="h-2 w-2 rounded-full ${dotColor} shrink-0" title="${statusLabel}"></span>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-semibold text-sm truncate">${UI.escape(r.cliente)}</span>
+                            <span class="text-sm font-bold tnum ${tipoColor}">${Utils.money(r.monto)}</span>
+                        </div>
+                        <div class="text-[11px] text-gray-500 flex items-center gap-1.5">
+                            <span class="${tipoColor}">${UI.escape(r.tipo)}</span>
+                            <span>·</span>
+                            <span>${Utils.timeAgo(r.createdAt)}</span>
+                        </div>
+                    </div>
+                </li>`;
+            }).join("");
+        },
+
+        // Escapado defensivo: aunque los datos sean del propio usuario de campo,
+        // nunca se inyectan en innerHTML sin sanitizar (mitiga XSS si en el futuro
+        // se sincronizan datos de otros orígenes, ej. notas compartidas en equipo).
+        escape(str) {
+            const div = document.createElement("div");
+            div.textContent = str ?? "";
+            return div.innerHTML;
+        },
+
+        refresh() {
+            document.getElementById("kpi-ventas").textContent = Utils.money(Store.kpiVentas());
+            this.renderLista();
+            this.updateStatusBadge();
+        }
+    };
+
+    /* =========================================================================
+       APP — orquestación y handlers de eventos
+       ========================================================================= */
+    const App = {
+        abrirModal(tipo) {
+            document.getElementById("form-tipo").value = tipo;
+            const chip = document.getElementById("modal-tipo-chip");
+            chip.textContent = tipo;
+            chip.className = "text-xs font-bold px-2.5 py-1 rounded-full " +
+                (tipo === "Venta" ? "bg-emerald-500/15 text-emerald-300" : "bg-sky-500/15 text-sky-300");
+
+            document.getElementById("modal-backdrop").classList.remove("opacity-0", "pointer-events-none");
+            document.getElementById("modal-carga").classList.remove("sheet-hidden");
+            setTimeout(() => document.getElementById("input-cliente").focus(), 150);
+        },
+
+        cerrarModal() {
+            document.getElementById("modal-backdrop").classList.add("opacity-0", "pointer-events-none");
+            document.getElementById("modal-carga").classList.add("sheet-hidden");
+            document.getElementById("form-carga").reset();
+            document.getElementById("error-cliente").classList.add("hidden");
+            document.getElementById("error-monto").classList.add("hidden");
+        },
+
+        manualSync() {
+            if (!navigator.onLine) { UI.toast("Sin conexión todavía."); return; }
+            Sync.flushQueue().then(() => UI.toast("Sincronización completa."));
+        },
+
+        handleSubmit(e) {
+            e.preventDefault();
+
+            const tipo = document.getElementById("form-tipo").value;
+            const cliente = document.getElementById("input-cliente").value.trim();
+            const montoRaw = document.getElementById("input-monto").value;
+            const notas = document.getElementById("input-notas").value.trim();
+            const monto = parseFloat(montoRaw);
+
+            let valid = true;
+            if (cliente.length < 2) {
+                document.getElementById("error-cliente").classList.remove("hidden");
+                valid = false;
+            } else {
+                document.getElementById("error-cliente").classList.add("hidden");
+            }
+            if (!Number.isFinite(monto) || monto <= 0) {
+                document.getElementById("error-monto").classList.remove("hidden");
+                valid = false;
+            } else {
+                document.getElementById("error-monto").classList.add("hidden");
+            }
+            if (!valid) return;
+
+            const btn = document.getElementById("btn-guardar");
+            btn.disabled = true;
+
+            const record = {
+                id: Utils.uuid(),
+                tipo, cliente, monto, notas,
+                createdAt: new Date().toISOString(),
+                synced: false,
+                attempts: 0,
+                lastError: null
+            };
+            Store.add(record);
+            UI.refresh();
+            App.cerrarModal();
+            UI.toast("Guardado localmente. Sincronizando…");
+
+            btn.disabled = false;
+            Sync.flushQueue();
+        },
+
+        init() {
+            document.getElementById("form-carga").addEventListener("submit", App.handleSubmit);
+            document.getElementById("modal-backdrop").addEventListener("click", App.cerrarModal);
+
+            window.addEventListener("online", () => { UI.toast("Conexión recuperada. Sincronizando…"); Sync.flushQueue(); });
+            window.addEventListener("offline", () => { UI.updateStatusBadge(); UI.toast("Sin conexión. Los datos se guardan en el equipo."); });
+
+            setInterval(() => { if (navigator.onLine) Sync.flushQueue(); }, CONFIG.RETRY_INTERVAL_MS);
+
+            UI.refresh();
+            if (navigator.onLine) Sync.flushQueue();
+            if (window.lucide) lucide.createIcons();
+        }
+    };
+
+    document.addEventListener("DOMContentLoaded", App.init);
+    </script>
+</body>
+</html>
